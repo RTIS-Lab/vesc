@@ -609,32 +609,36 @@ double VescPacketImu::yaw() const
 
 double VescPacketImu::acc_x()const
 {
-  return acc_x_;  // g/s
+  // VESC firmware reports linear acceleration in units of g. sensor_msgs/Imu
+  // mandates m/s^2 per REP-103, so scale here.
+  return acc_x_ * 9.80665;
 }
 
 double VescPacketImu::acc_y() const
 {
-  return acc_y_;
+  return acc_y_ * 9.80665;
 }
 
 double VescPacketImu::acc_z() const
 {
-  return acc_z_;
+  return acc_z_ * 9.80665;
 }
 
 double VescPacketImu::gyr_x() const
 {
-  return gyr_x_;  // deg/s
+  // VESC firmware reports angular velocity in deg/s. sensor_msgs/Imu mandates
+  // rad/s per REP-103, so convert here.
+  return gyr_x_ * (M_PI / 180.0);
 }
 
 double VescPacketImu::gyr_y() const
 {
-  return gyr_y_;
+  return gyr_y_ * (M_PI / 180.0);
 }
 
 double VescPacketImu::gyr_z() const
 {
-  return gyr_z_;
+  return gyr_z_ * (M_PI / 180.0);
 }
 
 double VescPacketImu::mag_x() const

@@ -33,6 +33,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <vesc_msgs/msg/vesc_state_stamped.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -51,6 +52,14 @@ VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
   base_frame_("base_link"),
   use_servo_cmd_(true),
   publish_tf_(false),
+  twist_cov_vx_(0.01),
+  twist_cov_vy_(0.0025),
+  twist_cov_yaw_base_(0.03),
+  twist_cov_yaw_scale_(0.25),
+  servo_lag_s_(0.10),
+  have_servo_cmd_(false),
+  last_servo_angle_(0.0),
+  servo_rate_rad_s_(0.0),
   x_(0.0),
   y_(0.0),
   yaw_(0.0)
@@ -77,6 +86,19 @@ VescToOdom::VescToOdom(const rclcpp::NodeOptions & options)
   }
 
   publish_tf_ = declare_parameter("publish_tf", publish_tf_);
+
+  // Twist measurement noise. robot_localization has no per-input covariance
+  // scaling -- it uses the covariance in the message verbatim, and clamps any
+  // variance below 1e-9 up to 1e-9 (i.e. "this measurement is exact"). A
+  // driver that leaves the twist covariance at zero therefore tells the EKF
+  // that both the speed and the steering echo are perfect, and consecutive
+  // updates from different sources simply overwrite each other.
+  twist_cov_vx_ = declare_parameter("twist_cov_vx", twist_cov_vx_);
+  twist_cov_vy_ = declare_parameter("twist_cov_vy", twist_cov_vy_);
+  twist_cov_yaw_base_ = declare_parameter("twist_cov_yaw_base", twist_cov_yaw_base_);
+  twist_cov_yaw_scale_ = declare_parameter("twist_cov_yaw_scale", twist_cov_yaw_scale_);
+  servo_lag_s_ = declare_parameter("servo_lag_s", servo_lag_s_);
+  servo_lag_s_ = std::max(servo_lag_s_, 1e-3);
 
   // create odom publisher
   odom_pub_ = create_publisher<Odometry>("odom", 10);
@@ -162,8 +184,42 @@ void VescToOdom::vescStateCallback(const VescStateStamped::SharedPtr state)
   odom.twist.twist.linear.y = 0.0;
   odom.twist.twist.angular.z = current_angular_velocity;
 
-  // Velocity uncertainty
-  /** @todo Think about velocity uncertainty */
+  // Velocity uncertainty.
+  //
+  // The yaw rate is derived from the *commanded* servo position rather than a
+  // measured wheel angle, so it carries two kinds of error:
+  //
+  //  1. A scale error. wheelbase in vesc.yaml is not the measured wheelbase,
+  //     and vyaw = v * tan(steer) / L is linear in 1/L, so the estimate is off
+  //     by a constant fraction of itself. Modelled as a term proportional to
+  //     |vyaw| (twist_cov_yaw_scale). Set it near zero once the wheelbase is
+  //     verified.
+  //
+  //  2. A lag error. While the servo is still slewing the command leads the
+  //     wheels, so the estimate is wrong by roughly dyaw/dt * lag, which for a
+  //     full lock-to-lock sweep at speed is several rad/s. It collapses to the
+  //     sensor noise floor once the servo settles, hence the decay with time
+  //     since the last servo command arrived.
+  //
+  // Reporting this honestly lets the EKF use the wheel yaw rate when it is
+  // trustworthy (it is a gyro-bias-free kinematic constraint) and fall back to
+  // the IMU while the steering is moving, instead of the all-or-nothing choice
+  // between fusing the echo as exact and dropping it entirely.
+  double steering_slew_rad_s = 0.0;
+  if (have_servo_cmd_) {
+    const double servo_age = std::max(0.0, (now() - last_servo_time_).seconds());
+    steering_slew_rad_s = servo_rate_rad_s_ * std::exp(-servo_age / servo_lag_s_);
+  }
+  const double lag_sigma = (wheelbase_ > 1e-6)
+    ? current_speed * steering_slew_rad_s * servo_lag_s_ / wheelbase_
+    : 0.0;
+  const double yaw_rate_sigma = std::hypot(
+    twist_cov_yaw_base_ + twist_cov_yaw_scale_ * std::fabs(current_angular_velocity),
+    lag_sigma);
+
+  odom.twist.covariance[0] = twist_cov_vx_;              ///< vx
+  odom.twist.covariance[7] = twist_cov_vy_;              ///< vy
+  odom.twist.covariance[35] = yaw_rate_sigma * yaw_rate_sigma;  ///< vyaw
 
   if (publish_tf_) {
     TransformStamped tf;
@@ -188,6 +244,25 @@ void VescToOdom::vescStateCallback(const VescStateStamped::SharedPtr state)
 void VescToOdom::servoCmdCallback(const Float64::SharedPtr servo)
 {
   last_servo_cmd_ = servo;
+
+  const double angle =
+    (servo->data - steering_to_servo_offset_) / steering_to_servo_gain_;
+  const rclcpp::Time stamp = now();
+
+  if (have_servo_cmd_) {
+    const double dt = (stamp - last_servo_time_).seconds();
+    if (dt > 1e-3) {
+      const double rate = std::fabs(angle - last_servo_angle_) / dt;
+      // Smooth over roughly one servo time constant so a single sample does
+      // not dominate the covariance estimate.
+      const double alpha = std::min(1.0, dt / servo_lag_s_);
+      servo_rate_rad_s_ += alpha * (rate - servo_rate_rad_s_);
+    }
+  }
+
+  last_servo_angle_ = angle;
+  last_servo_time_ = stamp;
+  have_servo_cmd_ = true;
 }
 
 }  // namespace vesc_ackermann

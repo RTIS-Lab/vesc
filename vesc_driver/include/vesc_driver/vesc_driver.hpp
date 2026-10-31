@@ -118,6 +118,13 @@ private:
   int fw_version_minor_;                ///< firmware minor version reported by vesc
   std::string imu_frame_id_;            ///< frame id for imu messages
 
+  // Measurement noise published in the std_msgs/Imu covariances (variances).
+  // Leaving them at zero makes robot_localization clamp them to 1e-9, i.e.
+  // "exact", so every IMU sample hard-overwrites the fused yaw rate.
+  double imu_orientation_variance_;
+  double imu_angular_velocity_variance_;
+  double imu_linear_acceleration_variance_;
+
   // ROS callbacks
   void brakeCallback(const Float64::SharedPtr brake);
   void currentCallback(const Float64::SharedPtr current);

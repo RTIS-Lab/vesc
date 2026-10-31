@@ -64,6 +64,22 @@ private:
   double wheelbase_;
   bool publish_tf_;
 
+  // Twist covariance published on /vesc_odom (variances). The steering angle is
+  // not measured -- this node echoes the commanded servo position -- so the
+  // yaw rate is only trustworthy once the servo has settled. See the model in
+  // vesc_to_odom.cpp.
+  double twist_cov_vx_;
+  double twist_cov_vy_;
+  double twist_cov_yaw_base_;    ///< std-dev (rad/s) when the servo is settled
+  double twist_cov_yaw_scale_;   ///< additional std-dev per |yaw rate|
+  double servo_lag_s_;           ///< servo response lag (s)
+
+  // Steering slew tracker: |d(steering angle)/dt| in rad/s.
+  bool have_servo_cmd_;
+  rclcpp::Time last_servo_time_;
+  double last_servo_angle_;
+  double servo_rate_rad_s_;
+
   // odometry state
   double x_, y_, yaw_;
   Float64::SharedPtr last_servo_cmd_;  ///< Last servo position commanded value

@@ -71,6 +71,17 @@ VescDriver::VescDriver(const rclcpp::NodeOptions & options)
   // get imu frame id
   imu_frame_id_ = declare_parameter<std::string>("imu_frame", "vesc_imu");
 
+  // Measurement noise for /sensors/imu/raw, as variances. These must not stay
+  // at zero: robot_localization replaces a zero variance with 1e-9 ("exact"),
+  // which is why fusing the raw yaw rate used to look noisier than the wheel
+  // estimate -- every sample was applied with full weight. The VESC attitude
+  // estimate has no absolute heading reference, so its variance is the loose
+  // one; the gyro and accelerometer values are direct sensor readings.
+  imu_orientation_variance_ = declare_parameter("imu_orientation_variance", 1e-2);
+  imu_angular_velocity_variance_ = declare_parameter("imu_angular_velocity_variance", 4e-4);
+  imu_linear_acceleration_variance_ =
+    declare_parameter("imu_linear_acceleration_variance", 4e-2);
+
   // attempt to connect to the serial port
   try {
     vesc_.connect(port);
@@ -248,6 +259,19 @@ void VescDriver::vescPacketCallback(const std::shared_ptr<VescPacket const> & pa
     std_imu_msg.orientation.x = imuData->q_x();
     std_imu_msg.orientation.y = imuData->q_y();
     std_imu_msg.orientation.z = imuData->q_z();
+
+    // Diagonal covariances only; the cross terms stay zero.
+    std_imu_msg.orientation_covariance[0] = imu_orientation_variance_;
+    std_imu_msg.orientation_covariance[4] = imu_orientation_variance_;
+    std_imu_msg.orientation_covariance[8] = imu_orientation_variance_;
+
+    std_imu_msg.angular_velocity_covariance[0] = imu_angular_velocity_variance_;
+    std_imu_msg.angular_velocity_covariance[4] = imu_angular_velocity_variance_;
+    std_imu_msg.angular_velocity_covariance[8] = imu_angular_velocity_variance_;
+
+    std_imu_msg.linear_acceleration_covariance[0] = imu_linear_acceleration_variance_;
+    std_imu_msg.linear_acceleration_covariance[4] = imu_linear_acceleration_variance_;
+    std_imu_msg.linear_acceleration_covariance[8] = imu_linear_acceleration_variance_;
 
 
     imu_pub_->publish(imu_msg);
@@ -431,15 +455,15 @@ double VescDriver::CommandLimit::clip(double value)
   auto clock = rclcpp::Clock(RCL_ROS_TIME);
 
   if (lower && value < lower) {
-    RCLCPP_INFO_THROTTLE(
-      logger, clock, 10, "%s command value (%f) below minimum limit (%f), clipping.",
-      name.c_str(), value, *lower);
+  //  RCLCPP_INFO_THROTTLE(
+  //    logger, clock, 10, "%s command value (%f) below minimum limit (%f), clipping.",
+  //    name.c_str(), value, *lower);
     return *lower;
   }
   if (upper && value > upper) {
-    RCLCPP_INFO_THROTTLE(
-      logger, clock, 10, "%s command value (%f) above maximum limit (%f), clipping.",
-      name.c_str(), value, *upper);
+  //  RCLCPP_INFO_THROTTLE(
+  //    logger, clock, 10, "%s command value (%f) above maximum limit (%f), clipping.",
+  //    name.c_str(), value, *upper);
     return *upper;
   }
   return value;
