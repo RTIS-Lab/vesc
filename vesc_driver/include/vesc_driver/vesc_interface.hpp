@@ -36,6 +36,7 @@
 #include <exception>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -129,6 +130,8 @@ private:
   // Pimpl - hide serial port members from class users
   class Impl;
   std::unique_ptr<Impl> impl_;
+  // Serialize async_send() initiation from multiple executor threads.
+  std::mutex send_mutex_;
 };
 
 // todo: review

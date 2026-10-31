@@ -238,6 +238,7 @@ bool VescInterface::isConnected() const
 
 void VescInterface::send(const VescPacket & packet)
 {
+  std::lock_guard<std::mutex> lock(send_mutex_);
   impl_->serial_driver_->port()->async_send(packet.frame());
 }
 

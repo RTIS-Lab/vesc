@@ -60,6 +60,9 @@ class VescDriver
 public:
   explicit VescDriver(const rclcpp::NodeOptions & options);
 
+  // Exposed so a custom executor can assign RT parameters to the poll timer.
+  rclcpp::TimerBase::SharedPtr getTimer() const { return timer_; }
+
 private:
   // interface to the VESC
   VescInterface vesc_;
